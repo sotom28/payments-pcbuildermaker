@@ -24,6 +24,10 @@ public class Order {
     @Column(name = "buyer_id", nullable = false, length = 36)
     private String buyerId;
 
+    /** Correo que el comprador indico para recibir confirmacion e informe tecnico. */
+    @Column(name = "buyer_email", length = 150)
+    private String buyerEmail;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "order_type", nullable = false, length = 30)
     private OrderType orderType = OrderType.SINGLE_PART;

@@ -10,12 +10,14 @@ import java.util.List;
 
 public record CreateOrderRequest(
         @NotBlank String buyerId,
+        String buyerEmail,
         OrderType orderType,
         @NotEmpty @Valid List<Item> items) {
 
     public record Item(
             @NotBlank String publicationId,
             @NotBlank String sellerId,
+            String title,
             @Min(1) int price) {
     }
 }

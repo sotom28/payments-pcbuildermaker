@@ -1,37 +1,80 @@
 package com.example.payments.service;
 
 import com.example.payments.dto.CardPaymentRequest;
+import com.example.payments.dto.CheckoutRequest;
 import com.example.payments.dto.CreateOrderRequest;
 import com.example.payments.exception.InvalidStateException;
 import com.example.payments.exception.NotFoundException;
+import com.example.payments.messaging.Events.OrderPaid;
+import com.example.payments.messaging.Events.PaidItem;
+import com.example.payments.messaging.OutboundMessage;
+import com.example.payments.messaging.RabbitConfig;
 import com.example.payments.model.Order;
 import com.example.payments.model.OrderItem;
 import com.example.payments.model.OrderType;
 import com.example.payments.model.PaymentStatus;
 import com.example.payments.repository.OrderRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.YearMonth;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @Transactional
 public class PaymentService {
 
+    /** Estados en los que una publicacion ya esta vendida y no puede entrar a otra compra. */
+    private static final Set<PaymentStatus> SOLD_STATES =
+            EnumSet.of(PaymentStatus.HOLD_ESCROW, PaymentStatus.RELEASED_TO_SELLER);
+
     private final OrderRepository repository;
+    private final ApplicationEventPublisher events;
     private final int feePercent;
 
     public PaymentService(OrderRepository repository,
+                          ApplicationEventPublisher events,
                           @Value("${payments.platform-fee-percent:5}") int feePercent) {
         this.repository = repository;
+        this.events = events;
         this.feePercent = feePercent;
+    }
+
+    /**
+     * Compra en un solo paso (pago simulado): crea la orden, la deja como pagada (HOLD_ESCROW) y avisa a
+     * reports-service con order.paid para que cada pieza aparezca en la bandeja del admin del taller.
+     */
+    public Order checkout(String buyerId, CheckoutRequest req) {
+        List<CheckoutRequest.Item> items = req.items();
+        if (items.stream().map(CheckoutRequest.Item::publicationId).distinct().count() != items.size()) {
+            throw new InvalidStateException("La orden repite una publicacion");
+        }
+        for (CheckoutRequest.Item i : items) {
+            if (i.sellerId().equals(buyerId)) {
+                throw new InvalidStateException("No puedes comprar tu propia publicacion: " + i.publicationId());
+            }
+            if (repository.existsItemByPublicationIdAndPaymentStatusIn(i.publicationId(), SOLD_STATES)) {
+                throw new InvalidStateException("La publicacion " + i.publicationId() + " ya fue comprada");
+            }
+        }
+        Order order = create(new CreateOrderRequest(buyerId, req.buyerEmail(), req.orderType(),
+                items.stream().map(i -> new CreateOrderRequest.Item(i.publicationId(), i.sellerId(), i.title(), i.price()))
+                        .toList()));
+        order.setPaymentStatus(PaymentStatus.HOLD_ESCROW);
+        order.setPaymentMethod("SIMULATED");
+        publishPaid(order);
+        return order;
     }
 
     public Order create(CreateOrderRequest req) {
         Order order = new Order();
         order.setBuyerId(req.buyerId());
+        order.setBuyerEmail(req.buyerEmail());
         order.setOrderType(req.orderType() != null ? req.orderType() : OrderType.SINGLE_PART);
         int total = 0;
         for (CreateOrderRequest.Item i : req.items()) {
@@ -39,6 +82,7 @@ public class PaymentService {
             item.setOrder(order);
             item.setPublicationId(i.publicationId());
             item.setSellerId(i.sellerId());
+            item.setDescription(i.title());
             item.setPrice(i.price());
             int fee = i.price() * feePercent / 100;
             item.setPlatformFee(fee);
@@ -74,7 +118,18 @@ public class PaymentService {
         order.setPaymentMethod("CARD");
         order.setCardBrand(brand(card.cardNumber()));
         order.setCardLast4(card.cardNumber().substring(card.cardNumber().length() - 4));
+        publishPaid(order);
         return order;
+    }
+
+    /** Anuncia el pago confirmado; se publica a RabbitMQ solo si la transaccion hace commit. */
+    private void publishPaid(Order order) {
+        events.publishEvent(new OutboundMessage(RabbitConfig.EXCHANGE, RabbitConfig.KEY_ORDER_PAID,
+                new OrderPaid(order.getOrderId(), order.getBuyerId(), order.getBuyerEmail(), Instant.now(),
+                        order.getItems().stream()
+                                .map(i -> new PaidItem(i.getOrderItemId(), i.getPublicationId(), i.getSellerId(),
+                                        i.getDescription(), i.getPrice()))
+                                .toList())));
     }
 
     private static boolean luhnValid(String number) {

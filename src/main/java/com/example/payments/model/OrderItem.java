@@ -31,6 +31,10 @@ public class OrderItem {
     @Column(name = "seller_id", nullable = false, length = 36)
     private String sellerId;
 
+    /** Titulo de la pieza al momento de la compra (lo ve el admin y va en el informe). */
+    @Column(length = 255)
+    private String description;
+
     @Column(nullable = false)
     private int price;
 
