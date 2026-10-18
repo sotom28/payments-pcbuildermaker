@@ -153,14 +153,18 @@ public class PaymentService {
         return "OTHER";
     }
 
-    /** Libera el dinero retenido a los vendedores. */
+    /** Libera el dinero retenido a los vendedores (el taller entrego las piezas aprobadas). */
     public Order release(String id) {
-        return transition(id, PaymentStatus.HOLD_ESCROW, PaymentStatus.RELEASED_TO_SELLER, "COMPLETED");
+        Order order = transition(id, PaymentStatus.HOLD_ESCROW, PaymentStatus.RELEASED_TO_SELLER, "COMPLETED");
+        order.getItems().forEach(i -> i.setInspectionStatus("PASSED"));
+        return order;
     }
 
-    /** Devuelve el dinero al comprador (solo si sigue retenido). */
+    /** Devuelve el dinero al comprador (solo si sigue retenido): la pieza no paso la revision. */
     public Order refund(String id) {
-        return transition(id, PaymentStatus.HOLD_ESCROW, PaymentStatus.REFUNDED, "CANCELLED");
+        Order order = transition(id, PaymentStatus.HOLD_ESCROW, PaymentStatus.REFUNDED, "CANCELLED");
+        order.getItems().forEach(i -> i.setInspectionStatus("FAILED"));
+        return order;
     }
 
     private Order transition(String id, PaymentStatus from, PaymentStatus to, String orderStatus) {
