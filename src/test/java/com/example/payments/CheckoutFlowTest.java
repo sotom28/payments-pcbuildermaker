@@ -129,7 +129,25 @@ class CheckoutFlowTest {
         mvc.perform(post("/api/payments/orders/" + orderId + "/release").header("X-User-Id", "admin-1")
                         .header("X-User-Role", "WORKSHOP_ADMIN"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paymentStatus").value("RELEASED_TO_SELLER"));
+                .andExpect(jsonPath("$.paymentStatus").value("RELEASED_TO_SELLER"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.items[0].inspectionStatus").value("PASSED"));
+    }
+
+    @Test
+    void elReembolsoCancelaLaOrdenYMarcaLosItemsComoRechazados() throws Exception {
+        String body = mvc.perform(post("/api/payments/orders/checkout").header("X-User-Id", "buyer-2")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutBody("comprador@correo.cl", pub(), "seller-1")))
+                .andReturn().getResponse().getContentAsString();
+        String orderId = com.jayway.jsonpath.JsonPath.read(body, "$.orderId");
+
+        mvc.perform(post("/api/payments/orders/" + orderId + "/refund").header("X-User-Id", "admin-1")
+                        .header("X-User-Role", "WORKSHOP_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("REFUNDED"))
+                .andExpect(jsonPath("$.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.items[0].inspectionStatus").value("FAILED"));
     }
 
     @Test
